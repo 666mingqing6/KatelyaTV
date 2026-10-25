@@ -117,6 +117,8 @@ function LoginPageClient() {
         sitekey: turnstileSiteKey,
         language: 'zh-cn',
         theme: 'auto',
+        // 与后端校验的 action 保持一致
+        action: 'auth',
         callback: (token: string) => setTurnstileToken(token),
         'expired-callback': () => setTurnstileToken(''),
         'error-callback': () => setTurnstileToken(''),
