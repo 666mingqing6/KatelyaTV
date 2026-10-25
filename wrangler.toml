@@ -1,5 +1,7 @@
 name = "katelyatv"
-compatibility_date = "2024-09-01"
+# 必须 >= 2024-09-23，否则只会启用 nodejs_compat v1，unenv polyfill 不会注入，
+# Next.js 边缘函数在 import 阶段即失败，表现为全站 500。
+compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".vercel/output/static"
 

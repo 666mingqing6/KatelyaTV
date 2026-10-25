@@ -1,5 +1,7 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
+import { getRequestContext } from '@cloudflare/next-on-pages';
+
 import { AdminConfig } from './admin.types';
 import { EpisodeSkipConfig, Favorite, IStorage, PlayRecord, User, UserSettings } from './types';
 
@@ -39,21 +41,42 @@ interface D1ExecResult {
 
 // 获取全局D1数据库实例
 function getD1Database(): D1Database {
-  // 在 Cloudflare Pages 环境中，DB 通过全局绑定可用
+  // 1) Cloudflare Pages / next-on-pages：绑定挂在请求上下文的 env 上，
+  //    既不在 globalThis 也不在 process.env，必须通过 getRequestContext 读取。
+  try {
+    const ctx = getRequestContext();
+    const bound = (ctx.env as any)?.DB;
+    if (bound) {
+      return bound as D1Database;
+    }
+  } catch {
+    // 非 Pages 运行时（本地 next dev / Docker）会抛错，忽略并走后续兜底
+  }
+
+  // 2) Cloudflare Workers 场景下，绑定可能被显式挂到全局
   if (typeof globalThis !== 'undefined') {
-    // 尝试直接访问全局 DB
     const globalDB = (globalThis as any).DB;
     if (globalDB) {
       return globalDB as D1Database;
     }
   }
-  
-  // 回退到 process.env（用于本地开发）
+
+  // 3) 本地开发兜底
   if (process.env.DB) {
     return (process.env as any).DB as D1Database;
   }
-  
+
   throw new Error('D1 database not available');
+}
+
+// 供上层判断 D1 是否真正可用，避免静默回退到 LocalStorage
+export function isD1Available(): boolean {
+  try {
+    getD1Database();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export class D1Storage implements IStorage {

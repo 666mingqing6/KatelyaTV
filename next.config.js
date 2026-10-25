@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
 /* eslint-disable @typescript-eslint/no-var-requires */
 const nextConfig = {
-  output: 'standalone',
+  // Docker / 自托管依赖 standalone 产物（见 Dockerfile 与 start.js）；
+  // 而 Cloudflare Pages（next-on-pages）需要默认输出结构。
+  // Cloudflare Pages 构建时会注入 CF_PAGES=1，据此自动切换，避免两种部署互相破坏。
+  ...(process.env.CF_PAGES ? {} : { output: 'standalone' }),
   eslint: {
     dirs: ['src'],
   },

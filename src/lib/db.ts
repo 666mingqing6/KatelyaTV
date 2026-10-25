@@ -1,7 +1,7 @@
 /* eslint-disable no-console, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
 import { AdminConfig } from './admin.types';
-import { D1Storage } from './d1.db';
+import { D1Storage, isD1Available } from './d1.db';
 import { KvrocksStorage } from './kvrocks.db';
 import { LocalStorage } from './localstorage.db';
 import { RedisStorage } from './redis.db';
@@ -31,15 +31,12 @@ function createStorage(): IStorage {
       case 'upstash':
         return new UpstashRedisStorage();
       case 'd1':
-        // 对于 d1，先检查是否可用
-        if (typeof globalThis !== 'undefined' && (globalThis as any).DB) {
+        // D1 绑定在 Cloudflare Pages 上通过请求上下文暴露，交由 isD1Available 统一判断；
+        // 不可用时回退到 LocalStorage，避免启动即抛错
+        if (isD1Available()) {
           return new D1Storage();
-        } else if (process.env.DB) {
-          return new D1Storage();
-        } else {
-          // D1 不可用，回退到 LocalStorage
-          return new LocalStorage();
         }
+        return new LocalStorage();
       case 'localstorage':
       default:
         // 使用 LocalStorage 实现，适用于本地开发和简单部署
