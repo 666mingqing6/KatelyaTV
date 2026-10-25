@@ -2,7 +2,7 @@
 
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { checkForUpdates, CURRENT_VERSION, UpdateStatus } from '@/lib/version';
 
@@ -80,6 +80,80 @@ function LoginPageClient() {
   const [enableRegister, setEnableRegister] = useState(false);
   const { siteName } = useSite();
 
+  // ---- Cloudflare Turnstile 人机验证 ----
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileBoxRef = useRef<HTMLDivElement>(null);
+  const turnstileIdRef = useRef<string | null>(null);
+
+  // 站点密钥由服务端下发，未配置则不渲染验证组件
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/server-config');
+        const cfg = await res.json();
+        if (!cancelled && cfg?.TurnstileSiteKey) {
+          setTurnstileSiteKey(cfg.TurnstileSiteKey);
+        }
+      } catch {
+        // 拉取失败则退化为无人机验证模式
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!turnstileSiteKey || !turnstileBoxRef.current) return;
+
+    const renderWidget = () => {
+      const ts = (window as any).turnstile;
+      if (!ts || !turnstileBoxRef.current) return;
+      // 避免重复渲染
+      if (turnstileIdRef.current) return;
+      turnstileIdRef.current = ts.render(turnstileBoxRef.current, {
+        sitekey: turnstileSiteKey,
+        language: 'zh-cn',
+        theme: 'auto',
+        callback: (token: string) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(''),
+        'error-callback': () => setTurnstileToken(''),
+      });
+    };
+
+    if ((window as any).turnstile) {
+      renderWidget();
+      return;
+    }
+
+    const existing = document.querySelector(
+      'script[data-turnstile="1"]'
+    ) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', renderWidget);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src =
+      'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.defer = true;
+    script.dataset.turnstile = '1';
+    script.addEventListener('load', renderWidget);
+    document.head.appendChild(script);
+  }, [turnstileSiteKey]);
+
+  const resetTurnstile = () => {
+    const ts = (window as any).turnstile;
+    if (ts && turnstileIdRef.current) {
+      ts.reset(turnstileIdRef.current);
+    }
+    setTurnstileToken('');
+  };
+
   // 在客户端挂载后设置配置
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -96,6 +170,10 @@ function LoginPageClient() {
     setError(null);
 
     if (!password || (shouldAskUsername && !username)) return;
+    if (turnstileSiteKey && !turnstileToken) {
+      setError('请先完成人机验证');
+      return;
+    }
 
     try {
       setLoading(true);
@@ -105,6 +183,7 @@ function LoginPageClient() {
         body: JSON.stringify({
           password,
           ...(shouldAskUsername ? { username } : {}),
+          ...(turnstileToken ? { turnstileToken } : {}),
         }),
       });
 
@@ -113,9 +192,11 @@ function LoginPageClient() {
         router.replace(redirect);
       } else if (res.status === 401) {
         setError('密码错误');
+        resetTurnstile();
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error ?? '服务器错误');
+        resetTurnstile();
       }
     } catch (error) {
       setError('网络错误，请稍后重试');
@@ -128,13 +209,21 @@ function LoginPageClient() {
   const handleRegister = async () => {
     setError(null);
     if (!password || !username) return;
+    if (turnstileSiteKey && !turnstileToken) {
+      setError('请先完成人机验证');
+      return;
+    }
 
     try {
       setLoading(true);
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          ...(turnstileToken ? { turnstileToken } : {}),
+        }),
       });
 
       if (res.ok) {
@@ -143,6 +232,7 @@ function LoginPageClient() {
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error ?? '服务器错误');
+        resetTurnstile();
       }
     } catch (error) {
       setError('网络错误，请稍后重试');
@@ -208,6 +298,13 @@ function LoginPageClient() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+
+            {/* 人机验证：仅在服务端下发站点密钥后渲染 */}
+            {turnstileSiteKey && (
+              <div className='flex justify-center'>
+                <div ref={turnstileBoxRef} />
+              </div>
+            )}
 
             {error && (
               <p className='text-sm text-red-600 dark:text-red-400'>{error}</p>

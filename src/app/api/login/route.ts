@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { verifyTurnstile } from '@/lib/turnstile';
 
 export const runtime = 'edge';
 
@@ -69,6 +70,21 @@ async function generateAuthCookie(
 
 export async function POST(req: NextRequest) {
   try {
+    // 请求体只读取一次，供人机验证与凭据校验共用
+    const body = await req.json().catch(() => ({}) as any);
+
+    // 人机验证（未配置 TURNSTILE_SECRET_KEY 时自动跳过）
+    const turnstile = await verifyTurnstile(
+      (body as any)?.turnstileToken,
+      req.headers.get('cf-connecting-ip') || undefined
+    );
+    if (!turnstile.ok) {
+      return NextResponse.json(
+        { ok: false, error: turnstile.reason || '人机验证未通过' },
+        { status: 403 }
+      );
+    }
+
     // 本地 / localStorage 模式——仅校验固定密码
     if (STORAGE_TYPE === 'localstorage') {
       const envPassword = process.env.AUTH_PASSWORD;
@@ -89,7 +105,7 @@ export async function POST(req: NextRequest) {
         return response;
       }
 
-      const { password } = await req.json();
+      const { password } = body as any;
       if (typeof password !== 'string') {
         return NextResponse.json({ error: '密码不能为空' }, { status: 400 });
       }
@@ -124,7 +140,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 数据库 / redis 模式——校验用户名并尝试连接数据库
-    const { username, password } = await req.json();
+    const { username, password } = body as any;
 
     if (!username || typeof username !== 'string') {
       return NextResponse.json({ error: '用户名不能为空' }, { status: 400 });

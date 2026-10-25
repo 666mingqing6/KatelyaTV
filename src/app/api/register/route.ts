@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { verifyTurnstile } from '@/lib/turnstile';
 
 export const runtime = 'edge';
 
@@ -60,6 +61,21 @@ async function generateAuthCookie(username: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
+    // 请求体只读取一次，供人机验证与凭据校验共用
+    const body = await req.json().catch(() => ({}) as any);
+
+    // 人机验证（未配置 TURNSTILE_SECRET_KEY 时自动跳过）
+    const turnstile = await verifyTurnstile(
+      (body as any)?.turnstileToken,
+      req.headers.get('cf-connecting-ip') || undefined
+    );
+    if (!turnstile.ok) {
+      return NextResponse.json(
+        { error: turnstile.reason || '人机验证未通过' },
+        { status: 403 }
+      );
+    }
+
     // localstorage 模式下不支持注册
     if (STORAGE_TYPE === 'localstorage') {
       return NextResponse.json(
@@ -74,7 +90,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '当前未开放注册' }, { status: 400 });
     }
 
-    const { username, password } = await req.json();
+    const { username, password } = body as any;
 
     if (!username || typeof username !== 'string') {
       return NextResponse.json({ error: '用户名不能为空' }, { status: 400 });
